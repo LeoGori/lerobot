@@ -15,6 +15,7 @@
 # limitations under the License.
 import logging
 import math
+import random
 from pprint import pformat
 
 import torch
@@ -195,12 +196,31 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     return dataset
 
 
+def split_episodes_by_task(
+    task_to_episodes: dict[str, list[int]], eval_split: float, *, shuffle: bool = False, seed: int | None = None
+) -> tuple[list[int], list[int]]:
+    """Split each task's episodes into (train, eval), holding out ceil(len * eval_split) of them per task.
+
+    By default the last episodes of a task are held out; with `shuffle` a random subset of the same size is
+    drawn (reproducibly from `seed`). Both returned lists keep the episodes in their original order.
+    """
+    rng = random.Random(seed)
+    train_episodes, eval_episodes = [], []
+    for eps in task_to_episodes.values():
+        n_eval = math.ceil(len(eps) * eval_split)
+        eval_set = set(rng.sample(eps, n_eval) if shuffle else eps[len(eps) - n_eval :])
+        train_episodes.extend(ep for ep in eps if ep not in eval_set)
+        eval_episodes.extend(ep for ep in eps if ep in eval_set)
+    return train_episodes, eval_episodes
+
+
 def make_train_eval_datasets(
     cfg: TrainPipelineConfig,
 ) -> tuple[LeRobotDataset | MultiLeRobotDataset, LeRobotDataset | None]:
     """Create train and optional eval datasets by splitting episodes based on eval_split.
 
-    The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.
+    The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation, or a random
+    subset of that size (seeded by `cfg.seed`) when `dataset.eval_split_shuffle` is set.
     If eval_split == 0.0, returns (full_dataset, None).
     """
     full_dataset = make_dataset(cfg)
@@ -218,11 +238,9 @@ def make_train_eval_datasets(
         task_key = episode_tasks[ep_idx][0] if episode_tasks[ep_idx] else ""
         task_to_episodes.setdefault(task_key, []).append(ep_idx)
 
-    train_episodes, eval_episodes = [], []
-    for eps in task_to_episodes.values():
-        n_eval = math.ceil(len(eps) * cfg.dataset.eval_split)
-        train_episodes.extend(eps[: len(eps) - n_eval])
-        eval_episodes.extend(eps[len(eps) - n_eval :])
+    train_episodes, eval_episodes = split_episodes_by_task(
+        task_to_episodes, cfg.dataset.eval_split, shuffle=cfg.dataset.eval_split_shuffle, seed=cfg.seed
+    )
 
     if not train_episodes:
         raise ValueError(
@@ -233,6 +251,8 @@ def make_train_eval_datasets(
         f"Train/eval split: {len(train_episodes)} train, {len(eval_episodes)} eval "
         f"(eval_split={cfg.dataset.eval_split}, {len(task_to_episodes)} tasks)"
     )
+    if cfg.dataset.eval_split_shuffle:
+        logging.info(f"Held-out eval episodes (seed={cfg.seed}): {eval_episodes}")
 
     delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, full_dataset.meta, cfg.rename_map)
 

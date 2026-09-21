@@ -55,6 +55,9 @@ class DatasetConfig:
     streaming: bool = False
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
+    # When True, the held-out episodes are drawn at random (seeded by the training `seed`) instead of being
+    # the last ones of each task.
+    eval_split_shuffle: bool = False
 
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
