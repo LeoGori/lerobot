@@ -29,8 +29,8 @@ from lerobot.datasets import LeRobotDataset, aggregate_stats, write_stats
 from lerobot.datasets.compute_stats import compute_episode_stats
 from lerobot.datasets.io_utils import load_stats
 
-REPO_ID = "LeGo98/graspglasshaptictattile_reduced"
-ROOT = Path("data/graspglasshaptictattile_reduced")
+REPO_ID = "TAPTIC/graspglasstattileno_reduced"
+ROOT = Path("data/graspglassnohaptictattile_reduced")
 ROT_NAMES = ("ee.wx", "ee.wy", "ee.wz")
 FEATURES = ("action", "observation.state")
 STAT_KEYS = ("min", "max", "mean", "std", "q01", "q10", "q50", "q90", "q99")

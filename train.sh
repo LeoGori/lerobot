@@ -18,7 +18,7 @@ set -euo pipefail
 SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
 cd "$(dirname "$SCRIPT")"
 
-REPO_ID="LeGo98/graspglasshaptictattile_reduced_GR00T17"
+REPO_ID="TAPTIC/graspglasshaptictattileno_reduced_GR00T17"
 
 # No checkpoints are written during training (--save_checkpoint=false): the only artifact is the final model,
 # pushed to the Hub when training ends. `push_to_hub` stages the ~13 GB model (FP32) in $TMPDIR before uploading,
@@ -78,8 +78,8 @@ echo "[$(date '+%F %T')] run $RUN_ID | host $(hostname) | output_dir $OUTPUT_DIR
 # episodes are printed at startup); --eval_steps computes the loss on them (see --eval_steps below).
 set +e
 "${RUN[@]}" lerobot-train \
-  --dataset.repo_id=LeGo98/graspglasshaptictattile_reduced \
-  --dataset.root=data/graspglasshaptictattile_reduced \
+  --dataset.repo_id=TAPTIC/graspglasstattileno_reduced \
+  --dataset.root=data/graspglasshaptictattileno_reduced \
   --dataset.image_transforms.enable=true \
   --dataset.eval_split=0.1 \
   --dataset.eval_split_shuffle=true \
@@ -93,13 +93,14 @@ set +e
   --seed=42 \
   --batch_size=8 \
   --steps=20000 \
-  --save_checkpoint=false \
+  --save_checkpoint=true \
+  --save_freq=1000 \
   --use_policy_training_preset=true \
   --env_eval_freq=0 \
   --eval_steps=1000 \
   --log_freq=50 \
   --output_dir="$OUTPUT_DIR" \
-  --job_name=graspglasshaptictattile_reduced_groot \
+  --job_name=graspglasshaptictattileno_reduced_groot \
   --wandb.enable=true \
   --policy.private=true \
   --wandb.disable_artifact=true \

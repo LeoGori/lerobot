@@ -8,9 +8,9 @@ from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
 
-SOURCE_REPO = "R1-HSP/graspglasshaptictattile"
-OUTPUT_REPO = "LeGo98/graspglasshaptictattile_reduced"
-OUTPUT_ROOT = Path("data/graspglasshaptictattile_reduced")
+SOURCE_REPO = "TAPTIC/graspglasstattileno"
+OUTPUT_REPO = "TAPTIC/graspglasstattileno_reduced"
+OUTPUT_ROOT = Path("data/graspglassnohaptictattile_reduced")
 # The source has two task entries (episodes 0-49 carry this text, episodes 50-75 an empty string); every
 # episode of the reduced dataset gets this single instruction.
 TASK = "Pick the glass and place it in the plate"
