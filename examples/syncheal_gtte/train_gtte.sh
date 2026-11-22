@@ -105,8 +105,8 @@ exec > >(tee -ia "$LOG_FILE") 2>&1
 echo "[$(date '+%F %T')] run $RUN_ID | host $(hostname) GPU $GPU | output_dir $OUTPUT_DIR"
 echo "  ft encoder $FT_ENCODER | gaze encoder $GAZE_ENCODER | dataset $DATASET_ROOT"
 
-# GTTE: the frozen encoders turn observation.ft_window (96, 6) and observation.gaze_window (60, 9: gaze + torso/neck
-# joints) into 16 + 8 standardized latents, written into the zero-padded GR00T state slots right after the 46-dim
+# GTTE: the frozen encoders turn 2 s of history, observation.ft_window (200, 6) and observation.gaze_window (60, 9:
+# gaze + torso/neck joints), into 32 + 8 standardized latents, written into the zero-padded GR00T state slots after the 46-dim
 # observation.state (see src/lerobot/policies/groot/temporal_encoders.py).
 # chunk_size=16 / n_action_steps=8 follow the TTE paper (1.6 s chunk at 10 Hz, re-plan after 8 actions).
 # eval_split holds out 10% of the episodes with seed 42: the same episodes the encoders used for validation.

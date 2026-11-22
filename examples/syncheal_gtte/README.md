@@ -4,15 +4,16 @@ Fine-tune GR00T N1.7 on [`SyncHeal/move-handle-test`](https://huggingface.co/dat
 while also feeding it the high-rate force/torque (~96 Hz) and gaze (~25 Hz) streams that the 10 Hz LeRobot
 frames only snapshot. Following Temporal Tactile Encoding
 ([project page](https://hsp-iit.github.io/temporal-tactile-bimanual-handover/)), each stream is summarized by
-an autoencoder trained separately and frozen; its latent is appended to the GR00T state vector.
+an autoencoder trained separately and frozen; its latent is appended to the GR00T state vector. Both
+encoders see the last 2 s of their stream (FT at 100 Hz; gaze + torso/neck joints at 30 Hz).
 
 ```
-raw_streams/ft.parquet   (~96 Hz) --causal ZOH--> observation.ft_window   (96, 6)  --frozen enc--> 16 latents --+
+raw_streams/ft.parquet   (~96 Hz) --causal ZOH--> observation.ft_window   (200, 6) --frozen enc--> 32 latents --+
 raw_streams/gaze.parquet (~25 Hz) --causal ZOH--> observation.gaze_window (60, 9)  --frozen enc-->  8 latents --+
   + torso/neck joints of the 10 Hz state (gaze pixels depend on the head pose)                                  |
 observation.state (46: poses, apertures, joints; raw ft/gaze snapshots dropped) -- GR00T min-max norm --+        |
                                                                                                         v        v
-                                                            GR00T state (132) = [ state 0:46 | latents 46:70 | 0 ]
+                                                            GR00T state (132) = [ state 0:46 | latents 46:86 | 0 ]
 ```
 
 The latents are standardized with the encoders' train-set statistics and written into the zero-padded state
@@ -71,7 +72,7 @@ from lerobot.policies.groot.temporal_encoders import zoh_windows
 # ft_t, ft_v: recent (recv_time, [fx..tz]) samples; gaze_t, gaze_v: (recv_time, [u, v, score]);
 # tick_t, joints: obs_time and [torso_roll, torso_pitch, torso_yaw, neck_pitch, neck_roll, neck_yaw]
 # of the recent 10 Hz policy ticks (not the high-rate encoders, to match training).
-ft_window = zoh_windows(ft_t, ft_v, [now], rate_hz=100.0, length=96)[0]                  # (96, 6)
+ft_window = zoh_windows(ft_t, ft_v, [now], rate_hz=100.0, length=200)[0]                 # (200, 6)
 gaze_window = np.concatenate(
     [zoh_windows(gaze_t, gaze_v, [now], 30.0, 60)[0], zoh_windows(tick_t, joints, [now], 30.0, 60)[0]], axis=-1
 )                                                                                         # (60, 9)
@@ -79,5 +80,5 @@ observation["observation.ft_window"] = torch.from_numpy(ft_window)
 observation["observation.gaze_window"] = torch.from_numpy(gaze_window)
 ```
 
-Keep ~1 s of FT and ~2 s of gaze/tick history in ring buffers. The frozen encoders run inside the policy;
+Keep a bit more than 2 s of FT, gaze and tick history in ring buffers. The frozen encoders run inside the policy;
 only the raw windows are needed.

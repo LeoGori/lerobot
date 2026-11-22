@@ -164,7 +164,7 @@ def main() -> None:
             spec["stream"]["rate_hz"],
             spec["window_length"],
             spec["num_channels"],
-            (spec["window_length"] - 1) / spec["stream"]["rate_hz"],
+            spec["window_length"] / spec["stream"]["rate_hz"],
             spec["stream"]["file"],
         )
 
