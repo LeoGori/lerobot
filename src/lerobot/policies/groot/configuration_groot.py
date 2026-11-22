@@ -19,6 +19,7 @@ import math
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -338,6 +339,19 @@ class GrootConfig(PreTrainedConfig):
     # keep the gripper absolute, matching the Isaac-GR00T single-arm + absolute-gripper convention.
     relative_exclude_joints: list[str] = field(default_factory=list)
 
+    # GTTE (GR00T + Temporal Tactile Encoding): frozen encoders for high-rate sensor windows.
+    # Maps a dataset observation key holding a raw (T, C) window (e.g. "observation.ft_window") to an
+    # exported window encoder (a `syncheal_window_ae/v1` export folder or its artifacts/model_state.pt).
+    # Each window is encoded by its frozen encoder and the standardized latents are written into the
+    # zero-padded state slots right after observation.state (streams in sorted-key order), so they reach
+    # GR00T's state encoder as part of the state vector. The encoders are never trained.
+    temporal_encoders: dict[str, str] = field(default_factory=dict)
+
+    # Architecture + stream metadata of `temporal_encoders`. Filled from the exports when the policy is
+    # built and saved in config.json, so a fine-tuned checkpoint can be rebuilt without the export files
+    # (the frozen encoder weights are stored in model.safetensors). Not meant to be set by hand.
+    temporal_encoder_specs: dict[str, dict[str, Any]] = field(default_factory=dict)
+
     # Training parameters
     optimizer_lr: float = 1e-4
     # Isaac-GR00T N1.7 fine-tunes with AdamW betas (0.9, 0.999).
@@ -499,6 +513,50 @@ class GrootConfig(PreTrainedConfig):
                     f"Action dimension {action_dim} exceeds max_action_dim {self.max_action_dim}. "
                     f"Either reduce action dimension or increase max_action_dim in config."
                 )
+
+        self.validate_temporal_encoders()
+
+    @property
+    def temporal_latent_dim(self) -> int:
+        """Total state slots taken by the frozen temporal-encoder latents (0 without GTTE)."""
+        return sum(int(self.temporal_encoder_specs[key]["embedding_dim"]) for key in self.temporal_encoders)
+
+    def validate_temporal_encoders(self) -> None:
+        """Check the GTTE windows against the dataset features and the state width.
+
+        Specs are filled when the policy is built; before that only the keys are checked.
+        """
+        if not self.temporal_encoders:
+            return
+        if self.input_features is None:
+            raise ValueError("`input_features` must be resolved before validating temporal encoders.")
+        if OBS_STATE not in self.input_features:
+            raise ValueError(
+                "GTTE temporal encoders need an `observation.state` feature to append latents to."
+            )
+        missing = [key for key in self.temporal_encoders if key not in self.input_features]
+        if missing:
+            raise ValueError(
+                f"Temporal encoder windows {missing} are not input features of the dataset. Build the dataset "
+                "with the window features (examples/syncheal_gtte/build_gtte_dataset.py)."
+            )
+        if not all(key in self.temporal_encoder_specs for key in self.temporal_encoders):
+            return
+        for key in self.temporal_encoders:
+            spec = self.temporal_encoder_specs[key]
+            expected = (int(spec["window_length"]), int(spec["num_channels"]))
+            shape = tuple(self.input_features[key].shape)
+            if shape != expected:
+                raise ValueError(
+                    f"Feature '{key}' has shape {shape} but its temporal encoder expects windows of shape "
+                    f"{expected}. Rebuild the dataset with the same encoder export."
+                )
+        state_dim = self.input_features[OBS_STATE].shape[0]
+        if state_dim + self.temporal_latent_dim > self.max_state_dim:
+            raise ValueError(
+                f"observation.state ({state_dim}) + temporal latents ({self.temporal_latent_dim}) exceed "
+                f"max_state_dim ({self.max_state_dim})."
+            )
 
     def get_optimizer_preset(self) -> AdamWConfig:
         """Return optimizer configuration."""

@@ -38,7 +38,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.utils.constants import ACTION, OBS_IMAGES
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..chunk import ChunkPolicySpec
@@ -54,6 +54,13 @@ from .configuration_groot import (
     infer_groot_n1_7_action_horizon,
 )
 from .groot_n1_7 import GR00TN17, _tie_unused_qwen_lm_head
+from .temporal_encoders import (
+    TemporalEncoderBank,
+    inject_latents_into_state,
+    load_temporal_encoder_export,
+    resolve_temporal_encoder_file,
+    same_architecture,
+)
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.trainer_pt_utils import get_parameter_names
@@ -79,8 +86,10 @@ class GrootPolicy(PreTrainedPolicy):
         """Initialize Groot policy wrapper."""
         require_package("transformers", extra="groot")
         super().__init__(config)
-        config.validate_features()
         self.config = config
+        # Built first: it fills config.temporal_encoder_specs, which validate_features() checks.
+        self.temporal_encoders = self._create_temporal_encoders()
+        config.validate_features()
 
         # Initialize GR00T model using ported components
         self._groot_model = self._create_groot_model()
@@ -120,6 +129,70 @@ class GrootPolicy(PreTrainedPolicy):
         if self.config.dtype == torch.float32:
             self._cast_model_parameters_to_fp32(model)
         return model
+
+    def _create_temporal_encoders(self) -> TemporalEncoderBank | None:
+        """Build the frozen GTTE encoders declared in `config.temporal_encoders` (None when unused).
+
+        The architecture comes from `config.temporal_encoder_specs` when present (fine-tuned checkpoint) and
+        from the export otherwise. Export weights are loaded when the export is reachable and matches the
+        architecture; when loading a fine-tuned checkpoint they are then overwritten by model.safetensors,
+        so a checkpoint can be rebuilt on a machine without the export files.
+        """
+        if not self.config.temporal_encoders:
+            return None
+        specs = {k: dict(v) for k, v in self.config.temporal_encoder_specs.items()}
+        weights = {}
+        for key, path in self.config.temporal_encoders.items():
+            if resolve_temporal_encoder_file(path) is None:
+                if key not in specs:
+                    raise FileNotFoundError(
+                        f"Temporal encoder export for '{key}' not found at '{path}', and the config carries no "
+                        "spec to rebuild it from."
+                    )
+                logger.info(
+                    "Temporal encoder export '%s' not found; '%s' weights must come from the checkpoint.",
+                    path,
+                    key,
+                )
+                continue
+            export_spec, state_dict = load_temporal_encoder_export(path)
+            if key in specs and not same_architecture(specs[key], export_spec):
+                logger.warning(
+                    "Temporal encoder export '%s' does not match the architecture stored in the config for '%s'; "
+                    "ignoring the export (weights must come from the checkpoint).",
+                    path,
+                    key,
+                )
+                continue
+            specs.setdefault(key, export_spec)
+            weights[key] = state_dict
+        self.config.temporal_encoder_specs = {key: specs[key] for key in self.config.temporal_encoders}
+        bank = TemporalEncoderBank(self.config.temporal_encoder_specs)
+        for key, state_dict in weights.items():
+            bank.load_encoder_state(key, state_dict)
+        logger.info(
+            "GTTE: frozen temporal encoders %s -> %d latent dims appended to observation.state.",
+            {k: v["embedding_dim"] for k, v in self.config.temporal_encoder_specs.items()},
+            bank.latent_dim,
+        )
+        return bank
+
+    def _inject_temporal_latents(
+        self, batch: dict[str, Tensor], groot_inputs: dict[str, Tensor]
+    ) -> dict[str, Tensor]:
+        """Append the frozen temporal-encoder latents to the (normalized, zero-padded) GR00T state."""
+        if self.temporal_encoders is None:
+            return groot_inputs
+        state = groot_inputs.get("state")
+        if state is None:
+            raise ValueError("GTTE needs `state` in the preprocessed batch to append the temporal latents.")
+        if self.config.input_features is None:
+            raise ValueError(
+                "`GrootConfig.input_features` must be resolved before encoding temporal windows."
+            )
+        latents = self.temporal_encoders(batch)  # fp32, outside of the bf16 autocast
+        offset = self.config.input_features[OBS_STATE].shape[0]
+        return {**groot_inputs, "state": inject_latents_into_state(state, latents, offset)}
 
     @staticmethod
     def _cast_model_parameters_to_fp32(model: torch.nn.Module) -> None:
@@ -470,6 +543,7 @@ class GrootPolicy(PreTrainedPolicy):
         Delegates to Isaac-GR00T model.forward when inputs are compatible.
         """
         groot_inputs = self._filter_groot_inputs(batch, include_action=True)
+        groot_inputs = self._inject_temporal_latents(batch, groot_inputs)
 
         # Get device from model parameters
         device = get_device_from_parameters(self)
@@ -515,6 +589,7 @@ class GrootPolicy(PreTrainedPolicy):
         # During inference, we do not pass action because it is predicted.
         # N1.7 still carries a 2-D action horizon mask from its checkpoint processor.
         groot_inputs = self._filter_groot_inputs(batch, include_action=False)
+        groot_inputs = self._inject_temporal_latents(batch, groot_inputs)
         groot_inputs, groot_options = self._prepare_n1_7_rtc_inputs(
             groot_inputs,
             inference_delay=kwargs.get("inference_delay"),
