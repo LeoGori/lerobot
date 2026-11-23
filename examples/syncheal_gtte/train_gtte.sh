@@ -1,24 +1,19 @@
 #!/usr/bin/env bash
 # Fine-tune GR00T N1.7 on a SyncHeal dataset with frozen FT + gaze temporal encoders (GTTE).
 #
-# Usage (from anywhere, after building the dataset with build_gtte_dataset.py):
+# Usage (from the repo root, after building the dataset with build_gtte_dataset.py):
 #   ./examples/syncheal_gtte/train_gtte.sh [extra lerobot-train flags]
 #
 # Environment overrides:
 #   FT_ENCODER / GAZE_ENCODER   encoder export folders (tactile-encoder-ergocub, syncheal/{ft,gaze}-ae branches)
-#   STORAGE                     big-data root (default /mnt/storage/$USER/syncheal_gtte, never the root disk)
-#   DATASET_ROOT / DATASET_ID   GTTE dataset built by build_gtte_dataset.py (default $STORAGE/data/...)
-#   OUTPUT_ROOT                 runs, logs and TMPDIR (default $STORAGE/train)
+#   DATASET_ROOT / DATASET_ID   GTTE dataset built by build_gtte_dataset.py
 #   STEPS / BATCH_SIZE          training length and batch size
-#   GPU                         GPU index to pin (default 0)
-#   ALLOW_SHARED_GPU=1          start even if another user has processes on that GPU (ask them first)
-#   HUB_REPO_ID                 if set, push the final policy there (private) instead of keeping a local copy.
-#                               Lab checkpoints go to the Hub only if the PI allowed it (hsp-workstation rules).
+#   HUB_REPO_ID                 if set, push the final policy there (private) instead of keeping a local copy
+#   OUTPUT_ROOT                 where runs and logs go (default outputs/train)
 #
-# Shared HSP machines (hsp-workstation skill): run `hsp-status` first, use a GPU marked FREE, book the machine
-# (`hsp-book add ...`) for runs longer than about a day. The script checks the GPU and the disk before starting.
+# Loss curves go to Trackio's local database: `trackio show --project syncheal_gtte`
+# (add --trackio.space_id=<user>/<space> to log to a Hugging Face Space instead).
 #
-# Loss curves go to Trackio's local database: `trackio show --project syncheal_gtte`.
 # Runs in the foreground; start it from tmux to survive closing the terminal:
 #   tmux new -s gtte && ./examples/syncheal_gtte/train_gtte.sh
 
@@ -29,29 +24,20 @@ fi
 set -euo pipefail
 
 SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
-cd "$(dirname "$SCRIPT")/../.."  # repo root, so relative paths resolve
+cd "$(dirname "$SCRIPT")/../.."  # repo root, so the relative paths below resolve
 
 ENCODERS_REPO="${ENCODERS_REPO:-../tactile-encoder-ergocub}"
 FT_ENCODER="$(readlink -f "${FT_ENCODER:-$ENCODERS_REPO/outputs/syncheal_ft_ae/export}")"
 GAZE_ENCODER="$(readlink -f "${GAZE_ENCODER:-$ENCODERS_REPO/outputs/syncheal_gaze_ae/export}")"
-STORAGE="${STORAGE:-/mnt/storage/$USER/syncheal_gtte}"
 DATASET_ID="${DATASET_ID:-SyncHeal/move-handle-test-gtte}"
-DATASET_ROOT="${DATASET_ROOT:-$STORAGE/data/move-handle-test-gtte}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-$STORAGE/train}"
+DATASET_ROOT="${DATASET_ROOT:-data/move-handle-test-gtte}"
 STEPS="${STEPS:-40000}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
-GPU="${GPU:-0}"
 HUB_REPO_ID="${HUB_REPO_ID:-}"
-NEED_GB="${NEED_GB:-30}"  # final FP32 checkpoint (~13 GB) + Hub staging or optimizer-free copy + logs, with margin
+OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/train}"
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 OUTPUT_DIR="$OUTPUT_ROOT/move_handle_gtte_groot17_$RUN_ID"
 LOG_FILE="$OUTPUT_ROOT/logs/train_gtte_$RUN_ID.log"
-
-if ! mkdir -p "$STORAGE" 2>/dev/null; then
-  echo "Cannot create $STORAGE. /mnt/storage/<user> folders are created by the machine admins: ask for one," >&2
-  echo "or set STORAGE (or DATASET_ROOT/OUTPUT_ROOT) to a big filesystem you can write to (not the root disk)." >&2
-  exit 1
-fi
 
 for path in "$FT_ENCODER" "$GAZE_ENCODER"; do
   if [ ! -f "$path/artifacts/model_state.pt" ]; then
@@ -65,34 +51,10 @@ if [ ! -f "$DATASET_ROOT/meta/info.json" ]; then
   exit 1
 fi
 
-# --- GPU: never share a GPU another user is running on -------------------------------------------------------
-export CUDA_VISIBLE_DEVICES="$GPU"
-if command -v nvidia-smi >/dev/null 2>&1; then
-  others=""
-  for pid in $(nvidia-smi -i "$GPU" --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do
-    owner="$(ps -o user= -p "$pid" 2>/dev/null || echo unknown)"
-    [ "$owner" != "$USER" ] && others="$others $owner(pid $pid)"
-  done
-  if [ -n "$others" ] && [ "${ALLOW_SHARED_GPU:-0}" != "1" ]; then
-    echo "GPU $GPU is in use by:$others. Pick a FREE GPU/host (hsp-status), or ask them and set ALLOW_SHARED_GPU=1." >&2
-    exit 1
-  fi
-fi
-
-# --- disk: big filesystem only, stay below 90% ----------------------------------------------------------------
-mkdir -p "$OUTPUT_ROOT/tmp" "$OUTPUT_ROOT/logs"
-read -r size_kb used_kb avail_kb < <(df --output=size,used,avail -k "$OUTPUT_ROOT" | tail -1)
-need_kb=$((NEED_GB * 1024 * 1024))
-if [ "$avail_kb" -lt "$need_kb" ] || [ $(((used_kb + need_kb) * 100 / size_kb)) -gt 90 ]; then
-  echo "Not enough room under $OUTPUT_ROOT: $((avail_kb / 1048576)) GB free, need ${NEED_GB} GB and <= 90% use after." >&2
-  exit 1
-fi
-export TMPDIR="$(readlink -f "$OUTPUT_ROOT/tmp")"
-
-# --- CPU: don't grab every core of a shared box --------------------------------------------------------------
-export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}" MKL_NUM_THREADS="${MKL_NUM_THREADS:-8}"
-
 if command -v uv >/dev/null 2>&1; then RUN=(uv run); else RUN=(); fi
+
+mkdir -p "$OUTPUT_ROOT/tmp" "$OUTPUT_ROOT/logs"
+export TMPDIR="$(readlink -f "$OUTPUT_ROOT/tmp")"
 
 # Without a Hub repo the final checkpoint (~13 GB, FP32) is saved locally; with one it is only pushed.
 if [ -n "$HUB_REPO_ID" ]; then
@@ -102,8 +64,7 @@ else
 fi
 
 exec > >(tee -ia "$LOG_FILE") 2>&1
-echo "[$(date '+%F %T')] run $RUN_ID | host $(hostname) GPU $GPU | output_dir $OUTPUT_DIR"
-echo "  ft encoder $FT_ENCODER | gaze encoder $GAZE_ENCODER | dataset $DATASET_ROOT"
+echo "[$(date '+%F %T')] run $RUN_ID | output_dir $OUTPUT_DIR | ft $FT_ENCODER | gaze $GAZE_ENCODER"
 
 # GTTE: the frozen encoders turn 2 s of history, observation.ft_window (200, 6) and observation.gaze_window (60, 9:
 # gaze + torso/neck joints), into 32 + 8 standardized latents, written into the zero-padded GR00T state slots after the 46-dim
@@ -128,7 +89,6 @@ set +e
   --seed=42 \
   --batch_size="$BATCH_SIZE" \
   --steps="$STEPS" \
-  --num_workers=4 \
   --use_policy_training_preset=true \
   --env_eval_freq=0 \
   --eval_steps=4000 \

@@ -27,7 +27,7 @@ is saved in `config.json` (`temporal_encoder_specs`), so a checkpoint is self-co
 cd ../tactile-encoder-ergocub
 git switch syncheal/ft-ae   && python -m syncheal_ae.train --config configs/syncheal_ft.yaml
 git switch syncheal/gaze-ae && python -m syncheal_ae.train --config configs/syncheal_gaze.yaml
-# -> outputs/syncheal_ft_ae/export, outputs/syncheal_gaze_ae/export   (add --set device=cpu if no GPU is FREE)
+# -> outputs/syncheal_ft_ae/export, outputs/syncheal_gaze_ae/export   (add --set device=cpu to train on CPU)
 ```
 
 ## 2. Build the GTTE dataset
@@ -36,7 +36,7 @@ git switch syncheal/gaze-ae && python -m syncheal_ae.train --config configs/sync
 python examples/syncheal_gtte/build_gtte_dataset.py \
   --encoder ../tactile-encoder-ergocub/outputs/syncheal_ft_ae/export \
   --encoder ../tactile-encoder-ergocub/outputs/syncheal_gaze_ae/export \
-  --out-root /mnt/storage/$USER/syncheal_gtte/data/move-handle-test-gtte
+  --out-root data/move-handle-test-gtte
 ```
 
 Window length, rate and channels come from each export, so dataset and encoder always agree. Videos are
@@ -56,10 +56,7 @@ Key flags: `--policy.temporal_encoders='{"observation.ft_window": "<ft export>",
 `--dataset.eval_split=0.1 --dataset.eval_split_shuffle=true` with `--seed=42` holds out episodes
 `[1, 7, 15, 17, 40, 47]`, the same episodes the encoders used for validation.
 
-On the shared HSP machines the script follows the `hsp-workstation` rules: it refuses a GPU another user is
-on (`ALLOW_SHARED_GPU=1` after agreeing with them), writes to `/mnt/storage/$USER` (set `STORAGE` otherwise),
-checks the disk stays below 90%, and caps CPU threads. Full fine-tuning (projector + diffusion head) needs
-most of a 48 GB GPU at batch 8.
+Full fine-tuning (projector + diffusion head) needs most of a 48 GB GPU at batch 8.
 
 ## Deployment
 
