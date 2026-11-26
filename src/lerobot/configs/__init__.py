@@ -25,7 +25,7 @@ from lerobot.optim.ema import EMAConfig
 
 from . import parser  # registers the draccus codec of torch.dtype
 from .dataset import DatasetRecordConfig
-from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
+from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig, WandBConfig
 from .policies import PreTrainedConfig
 from .types import (
     FeatureType,
@@ -66,6 +66,7 @@ __all__ = [
     "PeftConfig",
     "PreTrainedConfig",
     "TrackioConfig",
+    "WandBConfig",
     "VideoEncoderConfig",
     "RGBEncoderConfig",
     "DepthEncoderConfig",

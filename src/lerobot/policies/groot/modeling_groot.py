@@ -178,9 +178,13 @@ class GrootPolicy(PreTrainedPolicy):
         return bank
 
     def _inject_temporal_latents(
-        self, batch: dict[str, Tensor], groot_inputs: dict[str, Tensor]
+        self, batch: dict[str, Tensor], groot_inputs: dict[str, Tensor], *, allow_missing: bool = False
     ) -> dict[str, Tensor]:
-        """Append the frozen temporal-encoder latents to the (normalized, zero-padded) GR00T state."""
+        """Append the frozen temporal-encoder latents to the (normalized, zero-padded) GR00T state.
+
+        With ``allow_missing`` (inference), a window absent from ``batch`` gets the neutral latent instead of
+        raising, so the policy can run without that stream.
+        """
         if self.temporal_encoders is None:
             return groot_inputs
         state = groot_inputs.get("state")
@@ -190,7 +194,8 @@ class GrootPolicy(PreTrainedPolicy):
             raise ValueError(
                 "`GrootConfig.input_features` must be resolved before encoding temporal windows."
             )
-        latents = self.temporal_encoders(batch)  # fp32, outside of the bf16 autocast
+        # fp32, outside of the bf16 autocast
+        latents = self.temporal_encoders(batch, missing_batch_size=state.shape[0] if allow_missing else None)
         offset = self.config.input_features[OBS_STATE].shape[0]
         return {**groot_inputs, "state": inject_latents_into_state(state, latents, offset)}
 
@@ -589,7 +594,7 @@ class GrootPolicy(PreTrainedPolicy):
         # During inference, we do not pass action because it is predicted.
         # N1.7 still carries a 2-D action horizon mask from its checkpoint processor.
         groot_inputs = self._filter_groot_inputs(batch, include_action=False)
-        groot_inputs = self._inject_temporal_latents(batch, groot_inputs)
+        groot_inputs = self._inject_temporal_latents(batch, groot_inputs, allow_missing=True)
         groot_inputs, groot_options = self._prepare_n1_7_rtc_inputs(
             groot_inputs,
             inference_delay=kwargs.get("inference_delay"),

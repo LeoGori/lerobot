@@ -241,6 +241,41 @@ def test_policy_builds_encoders_from_exports_and_injects_latents(exports):
     assert out["embodiment_id"] is groot_inputs["embodiment_id"]
 
 
+def test_bank_uses_neutral_latent_for_missing_windows_only_when_allowed(exports):
+    specs = {
+        key: load_temporal_encoder_export(exports[name][0])[0]
+        for key, name in ((GAZE_KEY, "gaze"), (FT_KEY, "ft"))
+    }
+    bank = TemporalEncoderBank(specs)
+    ft_window = torch.randn(3, 8, 6)
+
+    out = bank({FT_KEY: ft_window}, missing_batch_size=3)
+
+    torch.testing.assert_close(out[:, :4], bank.encoders[bank.module_name(FT_KEY)](ft_window))
+    torch.testing.assert_close(out[:, 4:], torch.zeros(3, 2))
+    torch.testing.assert_close(bank({}, missing_batch_size=2), torch.zeros(2, 6))
+    with pytest.raises(KeyError, match="observation.gaze_window"):
+        bank({FT_KEY: ft_window})
+
+
+def test_policy_inference_runs_without_windows_but_training_requires_them(exports):
+    paths = {FT_KEY: str(exports["ft"][0]), GAZE_KEY: str(exports["gaze"][0])}
+    policy = SimpleNamespace(config=_config(paths))
+    policy.temporal_encoders = GrootPolicy._create_temporal_encoders(policy)
+    state = torch.zeros(2, 1, 132)
+    state[:, 0, :10] = 0.5
+    batch = {GAZE_KEY: torch.randn(2, 5, 3)}  # no FT window
+
+    out = GrootPolicy._inject_temporal_latents(policy, batch, {"state": state}, allow_missing=True)
+
+    torch.testing.assert_close(out["state"][:, 0, 10:14], torch.zeros(2, 4))  # FT: neutral latent
+    torch.testing.assert_close(
+        out["state"][:, 0, 14:16], policy.temporal_encoders.encoders["observation__gaze_window"](batch[GAZE_KEY])
+    )
+    with pytest.raises(KeyError, match="observation.ft_window"):
+        GrootPolicy._inject_temporal_latents(policy, batch, {"state": state})
+
+
 def test_policy_rebuilds_encoders_from_config_specs_without_exports(exports, tmp_path):
     paths = {FT_KEY: str(exports["ft"][0]), GAZE_KEY: str(exports["gaze"][0])}
     trained = SimpleNamespace(config=_config(paths))

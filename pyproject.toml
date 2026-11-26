@@ -131,6 +131,8 @@ training = [
     "trackio[apple-gpu]>=0.44.0,<1.0.0; sys_platform == 'darwin'",
     "lerobot[accelerate-dep]",
 ]
+# Weights & Biases experiment tracking (--wandb.enable=true), next to or instead of Trackio.
+wandb = ["wandb>=0.24.0,<0.32.0"]
 hardware = [
     "lerobot[pynput-dep]",
     "lerobot[pyserial-dep]",

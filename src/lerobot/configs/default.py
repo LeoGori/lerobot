@@ -191,6 +191,29 @@ class TrackioConfig:
 
 
 @dataclass
+class WandBConfig:
+    """Training run tracking with Weights & Biases (https://wandb.ai), next to or instead of Trackio.
+
+    Needs `pip install 'lerobot[wandb]'` and a W&B login (`wandb login`, `~/.netrc` or `WANDB_API_KEY`).
+    """
+
+    enable: bool = False
+    # Checkpoints are not uploaded as W&B artifacts. Set to False to upload them.
+    disable_artifact: bool = True
+    project: str = "lerobot"
+    entity: str | None = None
+    notes: str | None = None
+    # Set automatically to the W&B run id, persisted in the checkpoint so resuming reattaches to the run.
+    run_id: str | None = None
+    resume: str | None = None  # Allowed values: 'allow', 'must', 'never', or 'auto'.
+    mode: str | None = None  # Allowed values: 'online', 'offline', 'disabled'. Defaults to 'online'.
+    console: str = "wrap"
+    console_multipart: bool = False
+    console_chunk_max_seconds: int = 0
+    add_tags: bool = True  # Save the run group (policy, seed, dataset, env) as W&B tags.
+
+
+@dataclass
 class EvalConfig:
     n_episodes: int = 50
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.

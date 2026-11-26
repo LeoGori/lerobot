@@ -218,6 +218,7 @@ class TemporalEncoderBank(nn.Module):
         )
         self.requires_grad_(False)
         self.eval()
+        self._warned_missing: set[str] = set()
 
     @staticmethod
     def module_name(key: str) -> str:
@@ -235,15 +236,31 @@ class TemporalEncoderBank(nn.Module):
         self.encoders[self.module_name(key)].load_state_dict(state_dict, strict=True)
 
     @torch.no_grad()
-    def forward(self, batch: Mapping[str, Any]) -> Tensor:
+    def forward(self, batch: Mapping[str, Any], missing_batch_size: int | None = None) -> Tensor:
+        """Encode every window of ``batch`` into the concatenated ``(B, latent_dim)`` latents.
+
+        Args:
+            batch: holds the ``(B, T, C)`` windows under their feature keys.
+            missing_batch_size: when given, a window absent from ``batch`` is replaced by the neutral latent
+                (zeros: the encoder's train-set mean after standardization) for that many rows, so the policy
+                can run without the stream. When None (training), a missing window is an error.
+        """
         latents = []
         for key in self.keys:
-            if key not in batch:
-                raise KeyError(
-                    f"Missing temporal window '{key}' in the batch. Build the dataset with the GTTE window "
-                    "features (examples/syncheal_gtte/build_gtte_dataset.py) or pass the window at inference."
-                )
             encoder = self.encoders[self.module_name(key)]
+            if key not in batch:
+                if missing_batch_size is None:
+                    raise KeyError(
+                        f"Missing temporal window '{key}' in the batch. Build the dataset with the GTTE window "
+                        "features (examples/syncheal_gtte/build_gtte_dataset.py) or pass the window at inference."
+                    )
+                if key not in self._warned_missing:
+                    self._warned_missing.add(key)
+                    logger.warning(
+                        "Temporal window '%s' not provided: using the neutral (train-set mean) latent for it.", key
+                    )
+                latents.append(encoder.latent_mean.new_zeros(missing_batch_size, encoder.embedding_dim))
+                continue
             window = torch.as_tensor(batch[key], device=encoder.input_mean.device)
             latents.append(encoder(window))
         return torch.cat(latents, dim=-1)

@@ -407,46 +407,6 @@ def test_train_config_parses_trackio_flags_and_round_trips(tmp_path):
     assert reloaded.trackio == cfg.trackio
 
 
-def test_train_config_migrates_legacy_wandb_section(tmp_path, caplog):
-    _parse_train_config().save_pretrained(tmp_path)
-    config_file = tmp_path / TRAIN_CONFIG_NAME
-    payload = json.loads(config_file.read_text())
-    del payload["trackio"]
-    payload["wandb"] = {
-        "enable": True,
-        "disable_artifact": True,
-        "project": "old-project",
-        "entity": "team",
-        "notes": None,
-        "run_id": "abc123",
-        "resume": None,
-        "mode": "online",
-        "console": "wrap",
-        "console_multipart": False,
-        "console_chunk_max_seconds": 0,
-        "add_tags": True,
-    }
-    config_file.write_text(json.dumps(payload))
-
-    with caplog.at_level(logging.WARNING):
-        cfg = TrainPipelineConfig.from_pretrained(tmp_path)
-
-    assert cfg.trackio == TrackioConfig(enable=True, disable_artifact=True, project="old-project")
-    assert "legacy `wandb` section" in caplog.text
-
-
-def test_train_config_explicit_trackio_section_wins_over_legacy_wandb(tmp_path):
-    _parse_train_config("--trackio.project=new-project").save_pretrained(tmp_path)
-    config_file = tmp_path / TRAIN_CONFIG_NAME
-    payload = json.loads(config_file.read_text())
-    payload["wandb"] = {"enable": True, "project": "old-project"}
-    config_file.write_text(json.dumps(payload))
-
-    cfg = TrainPipelineConfig.from_pretrained(tmp_path)
-
-    assert cfg.trackio == TrackioConfig(project="new-project")
-
-
 # --- real package ---
 
 _END_TO_END_SCRIPT = """

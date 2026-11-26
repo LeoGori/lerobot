@@ -27,8 +27,8 @@ encoder export given with ``--encoder``, the raw window that encoder expects:
   (e.g. torso/neck joints for gaze), those entries of the *original* 10 Hz ``observation.state``, timestamped
   with ``obs_time``, are held on the same grid and appended as channels. Window length, rate and channels are
   read from the export, so the dataset always matches the encoder.
-- ``observation.state``: by default without the 10 Hz ``ft.*`` / ``gaze.*`` snapshots (replaced by the
-  temporal latents, as in TTE) and the constant ``ft_tare.*`` calibration; see ``--drop-state-prefix``.
+- ``observation.state``: the full recorded 10 Hz state by default (62 values, including the 10 Hz ``ft.*`` /
+  ``gaze.*`` snapshots); ``--drop-state-prefix`` removes entries, e.g. ``--drop-state-prefix ft_tare.``.
 
 Videos are hard-linked (or copied) unchanged; stats of the modified features are recomputed.
 
@@ -64,8 +64,6 @@ from lerobot.utils.constants import HF_LEROBOT_HOME, OBS_STATE
 
 logger = logging.getLogger("build_gtte_dataset")
 
-DEFAULT_DROP_STATE_PREFIXES = ["ft.", "gaze.", "ft_tare."]
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -96,9 +94,9 @@ def parse_args() -> argparse.Namespace:
         "--drop-state-prefix",
         action="append",
         default=None,
-        help=f"observation.state names starting with this prefix are dropped (repeatable). Default: {DEFAULT_DROP_STATE_PREFIXES}.",
+        help="Drop the observation.state entries whose name starts with this prefix (repeatable). "
+        "Default: keep the full recorded 10 Hz state.",
     )
-    parser.add_argument("--keep-full-state", action="store_true", help="Keep all observation.state dims.")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -170,7 +168,7 @@ def main() -> None:
 
     # --- state reduction ------------------------------------------------------------------------------------
     state_names: list[str] = features[OBS_STATE]["names"]
-    prefixes = [] if args.keep_full_state else (args.drop_state_prefix or DEFAULT_DROP_STATE_PREFIXES)
+    prefixes = args.drop_state_prefix or []
     keep_idx = [i for i, n in enumerate(state_names) if not any(n.startswith(p) for p in prefixes)]
     kept_names = [state_names[i] for i in keep_idx]
     dropped = [n for n in state_names if n not in kept_names]
